@@ -20,20 +20,20 @@ app = FastAPI(title="Asistente de Informes Médicos")
 # Función para conectar a la BD
 # ----------------------------
 def conectar_db():
+    host = os.getenv("DB_HOST")
     try:
-        host = os.getenv("DB_HOST")
-        ipv4 = socket.gethostbyname(host)  # fuerza IPv4
-        return psycopg2.connect(
-            host=ipv4,
-            port=os.getenv("DB_PORT", "5432"),
-            dbname=os.getenv("DB_NAME", "postgres"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD"),
-            connect_timeout=10,
-        )
-    except Exception as e:
-        print("Error conectando a la base de datos:", e)
-        raise
+        ipv4 = socket.gethostbyname(host)
+    except Exception:
+        ipv4 = host
+
+    return psycopg2.connect(
+        host=ipv4,
+        port=os.getenv("DB_PORT", "5432"),
+        dbname=os.getenv("DB_NAME", "postgres"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD"),
+        connect_timeout=10,
+    )
 
 
 # ----------------------------
