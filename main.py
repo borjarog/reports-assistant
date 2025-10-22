@@ -22,8 +22,9 @@ app = FastAPI(title="Asistente de Informes Médicos")
 def conectar_db():
     host = os.getenv("DB_HOST")
     try:
-        ipv4 = socket.gethostbyname(host)
-    except Exception:
+        ipv4 = socket.gethostbyname(host)  # Fuerza IPv4
+    except Exception as e:
+        print(f"⚠️ Error resolviendo {host}: {e}")
         ipv4 = host
 
     return psycopg2.connect(
