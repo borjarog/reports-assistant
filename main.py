@@ -129,9 +129,7 @@ def generar_pdf(paciente, tratamientos, resultados):
 
     y = height - 220
     for t in tratamientos[:5]:
-        texto = (
-            f"- Día {t['dia_estancia']}: {t['tratamiento']} ({t['vía_administración']})"
-        )
+        texto = f"- Día {t['dia_estancia']}: {t['tratamiento']} ({t.get('via_administracion', 'N/A')})"
         c.drawString(60, y, texto)
         y -= 15
         if y < 100:
