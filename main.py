@@ -7,8 +7,17 @@ import tempfile
 import requests
 import os
 import matplotlib.pyplot as plt
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Asistente de Informes Médicos")
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # durante desarrollo, permite todos
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Variables de entorno
 SUPABASE_URL = os.getenv("SUPABASE_URL")
