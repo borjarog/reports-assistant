@@ -3,10 +3,23 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import requests
 import os
+from fastapi.middleware.cors import CORSMiddleware
 
 from pdf_generator import generar_informe_pdf  # <- Importa tu nuevo módulo
 
-app = FastAPI(title="Asistente de Informes Médicos")
+app = FastAPI(title="Asistente Médicos")
+
+# =======================================
+# CORS CONFIG (para peticiones desde el HTML)
+# =======================================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # o pon tu dominio, ej. ["https://miapp.com"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ==========================
 # VARIABLES DE ENTORNO
