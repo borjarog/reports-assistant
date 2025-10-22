@@ -1,150 +1,176 @@
-import os
-import socket
-import psycopg2
-import matplotlib.pyplot as plt
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
-from datetime import datetime
-
-load_dotenv()
+import tempfile
+import requests
+import os
+import matplotlib.pyplot as plt
 
 app = FastAPI(title="Asistente de Informes Médicos")
 
-
-# ----------------------------
-# Función para conectar a la BD
-# ----------------------------
-def conectar_db():
-    host = os.getenv("DB_HOST")
-    try:
-        ipv4 = socket.gethostbyname(host)  # Fuerza IPv4
-    except Exception as e:
-        print(f"⚠️ Error resolviendo {host}: {e}")
-        ipv4 = host
-
-    return psycopg2.connect(
-        host=ipv4,
-        port=os.getenv("DB_PORT", "5432"),
-        dbname=os.getenv("DB_NAME", "postgres"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD"),
-        connect_timeout=10,
-    )
+# Variables de entorno
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 
-# ----------------------------
-# Función para obtener datos del paciente
-# ----------------------------
+# --------------------------
+# MODELO DE ENTRADA
+# --------------------------
+class PacienteInput(BaseModel):
+    patient_id: str
+
+
+# --------------------------
+# FUNCIONES DE UTILIDAD
+# --------------------------
 def obtener_datos_paciente(patient_id):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("SELECT * FROM paciente WHERE patient_id = %s", (patient_id,))
-    data = cur.fetchone()
-    cur.close()
-    con.close()
-    return data
+    """Obtiene los datos del paciente desde la tabla 'paciente'."""
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    url = f"{SUPABASE_URL}/rest/v1/paciente?patient_id=eq.{patient_id}"
+
+    r = requests.get(url, headers=headers)
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Error Supabase: {r.text}")
+
+    data = r.json()
+    if not data:
+        raise HTTPException(
+            status_code=404, detail=f"Paciente {patient_id} no encontrado."
+        )
+    return data[0]
 
 
-# ----------------------------
-# Función para obtener resultados clínicos
-# ----------------------------
+def obtener_tratamientos(patient_id):
+    """Obtiene los tratamientos del paciente desde la tabla 'tratamientos'."""
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    url = f"{SUPABASE_URL}/rest/v1/tratamientos?patient_id=eq.{patient_id}&order=dia_estancia.asc"
+
+    r = requests.get(url, headers=headers)
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Error Supabase: {r.text}")
+    return r.json()
+
+
 def obtener_resultados_clinicos(patient_id):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute(
-        "SELECT fecha, temperatura, frecuencia_cardiaca, spo2, pcr_mg_l FROM resultados_clinicos WHERE patient_id = %s ORDER BY fecha",
-        (patient_id,),
-    )
-    data = cur.fetchall()
-    cur.close()
-    con.close()
-    return data
+    """Obtiene los resultados clínicos (analíticas, signos vitales...)"""
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    url = f"{SUPABASE_URL}/rest/v1/resultados_clinicos?patient_id=eq.{patient_id}&order=fecha.asc"
+
+    r = requests.get(url, headers=headers)
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Error Supabase: {r.text}")
+    return r.json()
 
 
-# ----------------------------
-# Función para generar gráfico temporal
-# ----------------------------
+# --------------------------
+# FUNCIÓN PARA GRAFICAR
+# --------------------------
 def generar_grafico(resultados):
+    """Genera un gráfico de la evolución de temperatura y PCR."""
     if not resultados:
         return None
 
-    fechas = [r[0] for r in resultados]
-    temperatura = [r[1] for r in resultados]
-    pcr = [r[4] for r in resultados]
+    fechas = [r["fecha"] for r in resultados]
+    temp = [r.get("temperatura", 0) for r in resultados]
+    pcr = [r.get("pcr_mg_l", 0) for r in resultados]
 
     plt.figure(figsize=(6, 3))
-    plt.plot(fechas, temperatura, marker="o", label="Temperatura (°C)")
-    plt.plot(fechas, pcr, marker="s", label="PCR (mg/L)")
+    plt.plot(fechas, temp, marker="o", label="Temperatura (°C)")
+    plt.plot(fechas, pcr, marker="x", label="PCR (mg/L)")
     plt.xlabel("Fecha")
-    plt.ylabel("Valor")
-    plt.title("Evolución Clínica del Paciente")
+    plt.ylabel("Valores")
+    plt.title("Evolución clínica")
     plt.legend()
     plt.tight_layout()
 
-    grafico_path = "grafico.png"
-    plt.savefig(grafico_path)
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    plt.savefig(temp_file.name)
     plt.close()
-    return grafico_path
+    return temp_file.name
 
 
-# ----------------------------
-# Generar informe PDF
-# ----------------------------
-def generar_pdf(paciente, resultados):
-    pdf_path = f"informe_{paciente[0]}.pdf"
-    c = canvas.Canvas(pdf_path, pagesize=A4)
+# --------------------------
+# FUNCIÓN PARA GENERAR PDF
+# --------------------------
+def generar_pdf(paciente, tratamientos, resultados):
+    """Genera un informe PDF básico con los datos del paciente."""
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    c = canvas.Canvas(tmp.name, pagesize=A4)
     width, height = A4
 
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(2 * cm, height - 2 * cm, "Informe Evolutivo del Paciente")
-
-    c.setFont("Helvetica", 12)
-    c.drawString(2 * cm, height - 3 * cm, f"Paciente: {paciente[1]}")
-    c.drawString(2 * cm, height - 3.7 * cm, f"Edad: {paciente[2]} años")
-    c.drawString(2 * cm, height - 4.4 * cm, f"Motivo ingreso: {paciente[10]}")
-    c.drawString(2 * cm, height - 5.1 * cm, f"Servicio: {paciente[11]}")
-
-    # Inserta gráfico si existe
-    grafico = generar_grafico(resultados)
-    if grafico:
-        c.drawImage(
-            grafico,
-            2 * cm,
-            height / 2 - 3 * cm,
-            width=16 * cm,
-            preserveAspectRatio=True,
-        )
-
-    c.setFont("Helvetica", 10)
-    c.setFillColor(colors.gray)
     c.drawString(
-        2 * cm, 2 * cm, f"Generado el {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        50, height - 80, f"Informe Evolutivo del Paciente: {paciente['nombre']}"
     )
 
+    c.setFont("Helvetica", 11)
+    c.drawString(50, height - 110, f"ID: {paciente['patient_id']}")
+    c.drawString(50, height - 125, f"Edad: {paciente['edad']} años")
+    c.drawString(50, height - 140, f"Sexo: {paciente['sexo']}")
+    c.drawString(50, height - 155, f"Motivo de ingreso: {paciente['motivo_ingreso']}")
+    c.drawString(50, height - 170, f"Servicio: {paciente['servicio']}")
+
+    c.line(50, height - 180, width - 50, height - 180)
+    c.drawString(50, height - 200, "Tratamientos principales:")
+
+    y = height - 220
+    for t in tratamientos[:5]:
+        texto = (
+            f"- Día {t['dia_estancia']}: {t['tratamiento']} ({t['vía_administración']})"
+        )
+        c.drawString(60, y, texto)
+        y -= 15
+        if y < 100:
+            c.showPage()
+            y = height - 100
+
+    grafico_path = generar_grafico(resultados)
+    if grafico_path:
+        c.drawImage(grafico_path, 50, 200, width=500, height=250)
+
+    c.setFont("Helvetica-Oblique", 10)
+    c.drawString(50, 50, "Generado automáticamente por el asistente clínico IA.")
     c.save()
-    return pdf_path
+    return tmp.name
 
 
-# ----------------------------
-# Endpoint principal
-# ----------------------------
+# --------------------------
+# ENDPOINT PRINCIPAL
+# --------------------------
 @app.post("/generar_informe")
-def generar_informe(data: dict):
-    patient_id = data.get("patient_id")
-    if not patient_id:
-        raise HTTPException(status_code=400, detail="Falta patient_id")
+def generar_informe(p: PacienteInput):
+    try:
+        paciente = obtener_datos_paciente(p.patient_id)
+        tratamientos = obtener_tratamientos(p.patient_id)
+        resultados = obtener_resultados_clinicos(p.patient_id)
 
-    paciente = obtener_datos_paciente(patient_id)
-    if not paciente:
-        raise HTTPException(status_code=404, detail="Paciente no encontrado")
+        pdf_path = generar_pdf(paciente, tratamientos, resultados)
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=f"informe_{p.patient_id}.pdf",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    resultados = obtener_resultados_clinicos(patient_id)
-    pdf_path = generar_pdf(paciente, resultados)
-    return FileResponse(
-        pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path)
-    )
+
+# --------------------------
+# ROOT (solo para test rápido)
+# --------------------------
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "API funcionando con Supabase REST"}

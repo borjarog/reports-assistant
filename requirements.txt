@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-matplotlib
 reportlab
-python-dotenv
-psycopg2-binary
+matplotlib
+requests
